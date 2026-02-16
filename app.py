@@ -1,61 +1,131 @@
 import streamlit as st
 import librosa
 import numpy as np
+import whisper
 import tempfile
 import os
 
-# Título y diseño
-st.title("🎹 Detector de Acordes de Edmuz")
-st.write("Sube tu archivo MP3 y la IA intentará decirte qué acordes suenan.")
+# --- Configuración Visual ---
+st.set_page_config(page_title="Acordes y Letra IA", page_icon="🎵")
 
-# Subida de archivo
-archivo_audio = st.file_uploader("Sube tu canción aquí", type=["mp3", "wav"])
+# Estilo CSS para que se vea como en tu imagen
+st.markdown("""
+    <style>
+    .bloque-musical {
+        font-family: monospace;
+        margin-bottom: 20px;
+        background-color: #f0f2f6;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    .acorde {
+        color: #0068c9; /* Azul fuerte */
+        font-weight: bold;
+        font-size: 18px;
+    }
+    .letra {
+        color: #31333F;
+        font-size: 16px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-if archivo_audio is not None:
-    # 1. Mostrar reproductor
-    st.audio(archivo_audio)
+st.title("🎵 Transcriptor de Canciones con Acordes")
+st.info("Sube tu canción. La IA escuchará la letra y calculará los acordes por frase.")
+
+# --- 1. Función de Detección de Acordes (Croma) ---
+def detectar_acorde_en_segmento(y, sr):
+    # Notas musicales (Cifrado Americano)
+    notas = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
     
-    if st.button("Analizar ahora"):
-        st.info("Procesando... Esto puede tardar unos 30 segundos. ¡Paciencia!")
-        
-        # 2. Guardar temporalmente el archivo para que librosa lo lea
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-            tmp.write(archivo_audio.getvalue())
-            ruta_temporal = tmp.name
+    # Extraer energía de notas (Chroma)
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    
+    # Promediar la energía de cada nota en este segmento
+    promedio_notas = np.mean(chroma, axis=1)
+    
+    # Encontrar la nota más fuerte (Raíz)
+    idx_raiz = np.argmax(promedio_notas)
+    nota_raiz = notas[idx_raiz]
+    
+    # Determinar si es Mayor o Menor (heurística simple basada en la tercera)
+    # Tercera Mayor esta a +4 semitonos, Menor a +3
+    idx_tercera_mayor = (idx_raiz + 4) % 12
+    idx_tercera_menor = (idx_raiz + 3) % 12
+    
+    val_mayor = promedio_notas[idx_tercera_mayor]
+    val_menor = promedio_notas[idx_tercera_menor]
+    
+    calidad = "m" if val_menor > val_mayor else "" # Si gana la menor, ponemos 'm'
+    
+    return f"{nota_raiz}{calidad}"
 
-        try:
-            # 3. Cargar audio (Solo los primeros 60 segundos para no saturar la memoria gratis)
-            y, sr = librosa.load(ruta_temporal, duration=60)
+# --- 2. Cargar Modelo Whisper (Letras) ---
+@st.cache_resource
+def cargar_whisper():
+    # Usamos el modelo "tiny" porque Streamlit Cloud tiene poca memoria RAM.
+    # Si fuera en tu PC potente, usaríamos "base" o "small".
+    return whisper.load_model("tiny")
+
+# --- Interfaz Principal ---
+archivo = st.file_uploader("Sube tu archivo MP3", type=["mp3", "wav"])
+
+if archivo is not None:
+    st.audio(archivo)
+    
+    if st.button("Analizar Ahora (Letra + Acordes)"):
+        with st.spinner("⏳ Cargando IA y escuchando la canción... (Esto puede tardar 1-2 minutos)"):
             
-            # 4. Magia matemática: Cromagrama (detectar notas)
-            chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+            # Guardar temporal
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                tmp.write(archivo.getvalue())
+                ruta_tmp = tmp.name
             
-            # Definir notas musicales
-            notas = ['Do', 'Do#', 'Re', 'Re#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si']
-            
-            # Analizar cada segundo
-            resultados = []
-            tiempo_total = librosa.get_duration(y=y, sr=sr)
-            
-            # Vamos a revisar cada 2 segundos
-            for t in range(0, int(tiempo_total), 2):
-                # Tomar un pedazo del audio
-                frame_index = librosa.time_to_frames(t, sr=sr)
-                if frame_index < chroma.shape[1]:
-                    # Ver qué nota suena más fuerte en ese momento
-                    columna = chroma[:, frame_index]
-                    indice_nota_mas_fuerte = np.argmax(columna)
-                    nota_detectada = notas[indice_nota_mas_fuerte]
+            try:
+                # A. Transcribir Letra con Whisper
+                modelo = cargar_whisper()
+                resultado = modelo.transcribe(ruta_tmp)
+                segmentos = resultado['segments'] # Lista de frases con tiempos
+                
+                # B. Cargar Audio para música con Librosa
+                y_completo, sr = librosa.load(ruta_tmp)
+                
+                st.success("¡Análisis completado! Aquí tienes tu canción:")
+                st.divider()
+                
+                # C. Procesar cada frase
+                for seg in segmentos:
+                    inicio = seg['start']
+                    fin = seg['end']
+                    texto = seg['text']
                     
-                    resultados.append(f"Segundos {t}-{t+2}: Probablemente {nota_detectada}")
+                    # Cortar el audio justo en esa frase
+                    inicio_sample = int(inicio * sr)
+                    fin_sample = int(fin * sr)
+                    
+                    if fin_sample > len(y_completo):
+                        fin_sample = len(y_completo)
+                        
+                    y_segmento = y_completo[inicio_sample:fin_sample]
+                    
+                    # Detectar acorde de ese pedacito
+                    if len(y_segmento) > 0:
+                        acorde = detectar_acorde_en_segmento(y_segmento, sr)
+                    else:
+                        acorde = ""
+                    
+                    # D. Mostrar Estilo "Imagen Adjunta" (Azul arriba, Texto abajo)
+                    html_bloque = f"""
+                    <div class="bloque-musical">
+                        <div class="acorde">{acorde}</div>
+                        <div class="letra">{texto}</div>
+                    </div>
+                    """
+                    st.markdown(html_bloque, unsafe_allow_html=True)
 
-            # 5. Mostrar resultados
-            st.success("¡Análisis terminado!")
-            st.text_area("Resultados:", value="\n".join(resultados), height=300)
-
-        except Exception as e:
-            st.error(f"Error al procesar: {e}")
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.warning("Nota: A veces la memoria gratis de Streamlit se llena. Si falla, intenta con una canción más corta.")
             
-        finally:
-            # Limpiar archivo temporal
-            os.remove(ruta_temporal)
+            finally:
+                os.remove(ruta_tmp)
