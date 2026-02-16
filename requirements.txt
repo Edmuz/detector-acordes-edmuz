@@ -2,4 +2,5 @@ streamlit
 librosa
 numpy
 scipy
-openai-whisper
+openai-whisper>=20231117
+tiktoken
