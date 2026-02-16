@@ -5,7 +5,7 @@ import whisper
 import tempfile
 import os
 
-# --- CONFIGURACIÓN VISUAL (ESTILO CANCIONERO PRO) ---
+# --- 1. CONFIGURACIÓN VISUAL (ESTILO CANCIONERO PRO) ---
 st.set_page_config(page_title="Cancionero Banda Pro", page_icon="🎸", layout="wide")
 
 st.markdown("""
@@ -39,9 +39,11 @@ st.markdown("""
     margin-bottom: 2px;
     position: absolute;
     top: 5px; /* Fijado arriba */
-    background-color: rgba(255,255,255,0.8);
-    padding: 0 2px;
+    background-color: rgba(255,255,255,0.9);
+    padding: 0 4px;
     border-radius: 4px;
+    min-width: 20px;
+    text-align: center;
 }
 
 /* La Palabra (Abajo y legible) */
@@ -56,10 +58,11 @@ st.markdown("""
     display: block;
     margin: 20px 0;
     padding: 10px;
-    background-color: #f8f9fa;
+    background-color: #f1f3f5;
     border-left: 4px solid #0044cc;
     color: #555;
     font-family: monospace;
+    font-size: 14px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -67,7 +70,7 @@ st.markdown("""
 st.title("🎸 Transcriptor para Bandas (Precisión por Palabra)")
 st.info("💡 Tip: Usando separación armónica para ignorar la batería y detectar mejores acordes.")
 
-# --- LÓGICA MUSICAL AVANZADA ---
+# --- 2. LÓGICA MUSICAL AVANZADA ---
 
 def generar_templates_acordes():
     """Genera moldes matemáticos para acordes Mayores y Menores."""
@@ -77,7 +80,7 @@ def generar_templates_acordes():
     for i, nota in enumerate(notas):
         # Mayor (Raíz, +4, +7)
         vec_maj = np.roll(np.array([1,0,0,0,1,0,0,1,0,0,0,0]), i)
-        templates[f"{nota}"] = vec_maj # Cifrado simple (C, D) para mayor
+        templates[f"{nota}"] = vec_maj 
         
         # Menor (Raíz, +3, +7)
         vec_min = np.roll(np.array([1,0,0,1,0,0,0,1,0,0,0,0]), i)
@@ -104,13 +107,13 @@ def detectar_acorde_preciso(chroma_segmento, templates):
             
     return mejor_acorde
 
-# --- CARGA DE IA ---
+# --- 3. CARGA DE IA ---
 @st.cache_resource
 def cargar_whisper():
     # Usamos 'small' para balancear precisión de letra y memoria
     return whisper.load_model("small")
 
-# --- APP PRINCIPAL ---
+# --- 4. APP PRINCIPAL ---
 archivo = st.file_uploader("Sube el audio de la banda (MP3/WAV)", type=["mp3", "wav"])
 
 if archivo is not None:
@@ -124,40 +127,36 @@ if archivo is not None:
                 ruta_tmp = tmp.name
             
             try:
-                # 1. PROCESAMIENTO DE AUDIO (Heavy Lifting)
-                # Cargamos audio
+                # A. PROCESAMIENTO DE AUDIO
                 y, sr = librosa.load(ruta_tmp)
                 
-                # TRUCO PRO: Separar la parte armónica (piano/guitarra) de la percusiva (batería)
-                # Esto evita que el golpe de caja confunda al detector de acordes.
+                # Separar armónicos (ignorar batería)
                 y_harmonica, _ = librosa.effects.hpss(y)
                 
-                # Calculamos CENS (Chroma Energy Normalized) - Mejor para acordes estables
+                # Calcular CENS (Chroma Energy Normalized)
                 chroma = librosa.feature.chroma_cens(y=y_harmonica, sr=sr)
                 templates, _ = generar_templates_acordes()
                 
-                # 2. TRANSCRIPCIÓN CON TIMESTAMPS POR PALABRA
+                # B. TRANSCRIPCIÓN IA
                 modelo = cargar_whisper()
-                # word_timestamps=True es la clave para la ubicación exacta
                 resultado = modelo.transcribe(
                     ruta_tmp, 
                     language="es", 
-                    word_timestamps=True, # ¡CRUCIAL!
-                    condition_on_previous_text=False # Evita bucles
+                    word_timestamps=True, # ¡CRUCIAL PARA UBICACIÓN EXACTA!
+                    condition_on_previous_text=False
                 )
                 
                 st.success("¡Análisis completado! Aquí está tu guía:")
                 
-                # 3. RENDERIZADO VISUAL
+                # --- CONSTRUCCIÓN DEL HTML (SIN ESPACIOS EXTRA) ---
+                # Importante: Todo el HTML se concatena en una sola línea larga para evitar errores de renderizado.
                 html_out = '<div class="main-container">'
                 
                 last_time = 0.0
                 
-                # Iteramos por segmentos y LUEGO por palabras
+                # Iteramos por segmentos
                 for segmento in resultado['segments']:
                     words = segmento.get('words', [])
-                    
-                    # Si Whisper no devuelve palabras (versiones viejas), fallback a segmento
                     if not words: 
                         words = [{'word': segmento['text'], 'start': segmento['start'], 'end': segmento['end']}]
                     
@@ -166,54 +165,38 @@ if archivo is not None:
                         start = word_obj['start']
                         end = word_obj['end']
                         
-                        # A. DETECTAR SILENCIOS LARGOS (Instrumental)
-                        if start - last_time > 3.0: # Más de 3 seg de silencio
-                            # Analizamos el centro de ese silencio
+                        # 1. DETECTAR SILENCIOS (Solo / Intro)
+                        if start - last_time > 3.0: 
                             mid_start = int(last_time * sr / 512)
                             mid_end = int(start * sr / 512)
                             if mid_end > mid_start:
-                                # Tomamos una muestra del chroma en ese hueco
                                 acorde_inst = detectar_acorde_preciso(chroma[:, mid_start:mid_end], templates)
-                                html_out += f"""
-                                <div class="instrumental-break">
-                                    🎵 Solo / Intro ({int(last_time)}s - {int(start)}s): <strong>{acorde_inst}</strong>
-                                </div>
-                                """
+                                # HTML COMPACTO (Sin saltos de linea dentro del string)
+                                html_out += f'<div class="instrumental-break">🎵 Solo / Intro ({int(last_time)}s - {int(start)}s): <strong>{acorde_inst}</strong></div>'
                         
-                        # B. DETECTAR ACORDE DE LA PALABRA
-                        # Convertimos tiempo a "frames" del chroma
-                        # librosa CENS suele tener hop_length=512 por defecto
+                        # 2. DETECTAR ACORDE DE LA PALABRA
                         idx_start = int(start * sr / 512)
                         idx_end = int(end * sr / 512)
-                        
-                        # Si la palabra es muy corta, tomamos un margen mínimo
-                        if idx_end <= idx_start:
-                            idx_end = idx_start + 1
+                        if idx_end <= idx_start: idx_end = idx_start + 1
                             
                         acorde = detectar_acorde_preciso(chroma[:, idx_start:idx_end], templates)
                         
-                        # Verificar si el acorde cambió respecto al anterior para no repetirlo tanto?
-                        # Para bandas, mejor mostrarlo siempre si hay dudas.
-                        
-                        # C. DIBUJAR CAJA
-                        html_out += f"""
-                        <div class="word-box">
-                            <div class="chord-label">{acorde}</div>
-                            <div class="lyrics-label">{palabra}</div>
-                        </div>
-                        """
+                        # 3. DIBUJAR CAJA (HTML COMPACTO)
+                        html_out += f'<div class="word-box"><div class="chord-label">{acorde}</div><div class="lyrics-label">{palabra}</div></div>'
                         
                         last_time = end
                     
-                    # Salto de línea visual al terminar una frase completa
+                    # Salto de línea al final de la frase
                     html_out += "<br>" 
                 
                 html_out += '</div>'
+                
+                # Renderizar diciéndole a Streamlit que es HTML seguro
                 st.markdown(html_out, unsafe_allow_html=True)
 
             except Exception as e:
                 st.error(f"Ocurrió un error técnico: {e}")
-                st.warning("Asegúrate de haber actualizado 'requirements.txt' con la versión de whisper indicada.")
+                st.warning("Nota: Asegúrate de que 'requirements.txt' tenga: openai-whisper>=20231117")
             finally:
                 if os.path.exists(ruta_tmp):
                     os.remove(ruta_tmp)
