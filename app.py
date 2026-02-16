@@ -5,73 +5,67 @@ import whisper
 import tempfile
 import os
 
-# --- 1. Configuración Visual (CSS Mejorado) ---
-st.set_page_config(page_title="Cancionero Pro", page_icon="🎹", layout="wide")
+# --- 1. Configuración Visual (CSS Robusto) ---
+st.set_page_config(page_title="Cancionero Pro 2.0", page_icon="🎵", layout="wide")
 
+# CSS: Definimos el estilo para que se vea profesional y forzamos la alineación
 st.markdown("""
-    <style>
-    /* Contenedor principal: estilo hoja de papel */
-    .cancionero-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px; /* Espacio entre sílabas/palabras */
-        line-height: 2.0;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        padding: 30px;
-        background-color: #ffffff;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
+<style>
+.cancionero-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    line-height: 2.2;
+    font-family: 'Segoe UI', sans-serif;
+    padding: 30px;
+    background-color: #ffffff;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+.bloque-palabra {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-right: 4px;
+    margin-bottom: 25px;
+}
+.acorde-style {
+    color: #007bff;
+    font-weight: 900;
+    font-size: 15px;
+    height: 20px;
+    margin-bottom: 4px;
+    min-width: 20px;
+    text-align: center;
+}
+.letra-style {
+    color: #111;
+    font-size: 19px;
+    letter-spacing: 0.5px;
+}
+.bloque-instrumental {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    background-color: #f1f3f5;
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+    margin-right: 10px;
+    margin-bottom: 25px;
+}
+.texto-instrumental {
+    font-size: 11px;
+    color: #868e96;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-top: 4px;
+}
+</style>
+""", unsafe_allow_html=True)
 
-    /* Bloque normal: Acorde + Palabra */
-    .bloque-palabra {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        margin-right: 2px;
-        margin-bottom: 20px; /* Espacio entre renglones */
-    }
-
-    /* Estilo del Acorde (Azul fuerte) */
-    .acorde-style {
-        color: #007bff; 
-        font-weight: 800; /* Más negrita */
-        font-size: 15px;
-        height: 20px;
-        margin-bottom: 2px;
-        min-width: 20px; /* Para que siempre ocupe espacio */
-        text-align: center;
-    }
-
-    /* Estilo de la Letra (Negro) */
-    .letra-style {
-        color: #222;
-        font-size: 18px;
-    }
-
-    /* Bloque para partes SOLO MÚSICA */
-    .bloque-instrumental {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        background-color: #f0f0f0; /* Fondo grisacio para diferenciar */
-        padding: 0 8px;
-        border-radius: 4px;
-        border: 1px dashed #bbb;
-        margin-right: 8px;
-        margin-bottom: 20px;
-    }
-    .texto-instrumental {
-        font-size: 12px;
-        color: #666;
-        font-style: italic;
-        margin-top: 2px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title("🎹 Transcriptor Fiel (Letra + Acordes)")
-st.info("Ahora usando el modelo 'BASE' para mayor precisión en la letra.")
+st.title("🎹 Transcriptor Pro (Modelo Small + Anti-Alucinaciones)")
+st.info("Usando modelo 'SMALL'. Puede tardar un poco más, pero la calidad es superior.")
 
 # --- 2. Funciones Musicales ---
 def obtener_nombre_acorde(chroma_mean):
@@ -79,11 +73,11 @@ def obtener_nombre_acorde(chroma_mean):
     idx = np.argmax(chroma_mean)
     nota = notas[idx]
     
-    # Lógica Mayor/Menor
     tercera_mayor = (idx + 4) % 12
     tercera_menor = (idx + 3) % 12
     
-    if chroma_mean[tercera_menor] > chroma_mean[tercera_mayor] * 1.1:
+    # Ajuste de sensibilidad para acordes menores
+    if chroma_mean[tercera_menor] > chroma_mean[tercera_mayor] * 1.05:
         return f"{nota}m"
     return nota
 
@@ -93,12 +87,11 @@ def analizar_segmento(y, sr):
     promedio = np.mean(chroma, axis=1)
     return obtener_nombre_acorde(promedio)
 
-# --- 3. Carga IA (CAMBIO IMPORTANTE AQUÍ) ---
+# --- 3. Carga IA (MODELO SMALL) ---
 @st.cache_resource
 def cargar_whisper():
-    # CAMBIO: Usamos "base" en lugar de "tiny". 
-    # "base" es mucho más inteligente y no alucina tanto, aunque tarda un pelín más.
-    return whisper.load_model("base")
+    # 'small' es el equilibrio perfecto. 'medium' suele colapsar la memoria gratis.
+    return whisper.load_model("small") 
 
 # --- 4. Aplicación Principal ---
 archivo = st.file_uploader("Sube tu audio (MP3/WAV)", type=["mp3", "wav"])
@@ -106,28 +99,38 @@ archivo = st.file_uploader("Sube tu audio (MP3/WAV)", type=["mp3", "wav"])
 if archivo is not None:
     st.audio(archivo)
     
-    if st.button("Analizar Canción"):
-        with st.spinner("🎧 Escuchando con atención (Modelo Base)... Por favor espera..."):
+    if st.button("Analizar con Precisión"):
+        with st.spinner("🧠 Cerebro 'Small' pensando... (Esto toma unos 2 minutos, paciencia)..."):
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
                 tmp.write(archivo.getvalue())
                 ruta_tmp = tmp.name
             
             try:
-                # 1. Cargar Audio Musical
+                # A. Cargar Audio Musical
                 y, sr = librosa.load(ruta_tmp)
                 
-                # 2. Transcribir Letra (IA Mejorada)
+                # B. Transcribir con PARAMETROS ANTI-ALUCINACIÓN
                 modelo = cargar_whisper()
-                # temperature=0 reduce la creatividad (evita invenciones)
-                resultado = modelo.transcribe(ruta_tmp, language="es", temperature=0)
+                
+                # Estos parámetros evitan que la IA invente texto cuando hay solo música
+                opciones = {
+                    "language": "es", 
+                    "temperature": 0.0, # Creatividad 0 para ser fiel
+                    "condition_on_previous_text": False, # Evita bucles de repetición
+                    "no_speech_threshold": 0.6, # Ignora ruidos bajos
+                    "initial_prompt": "Esta es la letra de una canción en español." # Contexto forzado
+                }
+                
+                resultado = modelo.transcribe(ruta_tmp, **opciones)
                 segmentos = resultado['segments']
                 
-                st.success("¡Transcripción completada con éxito!")
-                st.markdown("---")
+                st.success("¡Análisis Completado!")
+                st.divider()
                 
-                # --- CONSTRUCCIÓN VISUAL ---
-                html_final = '<div class="cancionero-container">'
+                # --- C. CONSTRUCCIÓN HTML COMPACTA (Solución al error visual) ---
+                # Importante: No dejar espacios ni saltos de línea dentro del string HTML
+                html_code = '<div class="cancionero-container">'
                 cursor_tiempo = 0.0
                 
                 for seg in segmentos:
@@ -135,25 +138,17 @@ if archivo is not None:
                     fin = seg['end']
                     texto_frase = seg['text'].strip()
                     
-                    # A. DETECTAR MÚSICA/SILENCIO (Gaps de más de 2 segundos)
+                    # 1. DETECTAR PARTES INSTRUMENTALES (GAPS > 2 seg)
                     if inicio - cursor_tiempo > 2.0:
-                        # Analizamos qué acorde suena en ese silencio
                         idx_ini_gap = int(cursor_tiempo * sr)
                         idx_fin_gap = int(inicio * sr)
                         
                         if idx_fin_gap > idx_ini_gap:
-                            # Sacamos el acorde predominante de esa sección musical
                             acorde_gap = analizar_segmento(y[idx_ini_gap:idx_fin_gap], sr)
-                            
-                            # Lo añadimos como un bloque especial "Instrumental"
-                            html_final += f"""
-                            <div class="bloque-instrumental">
-                                <div class="acorde-style">{acorde_gap}</div>
-                                <div class="texto-instrumental">Música</div>
-                            </div>
-                            """
+                            # HTML en una sola línea para evitar errores
+                            html_code += f'<div class="bloque-instrumental"><div class="acorde-style">{acorde_gap}</div><div class="texto-instrumental">Música</div></div>'
                     
-                    # B. PROCESAR LA FRASE CANTADA
+                    # 2. PROCESAR FRASE CANTADA
                     idx_ini = int(inicio * sr)
                     idx_fin = int(fin * sr)
                     acorde_voz = analizar_segmento(y[idx_ini:idx_fin], sr)
@@ -161,27 +156,29 @@ if archivo is not None:
                     palabras = texto_frase.split(" ")
                     
                     for i, palabra in enumerate(palabras):
-                        # Ponemos el acorde en la primera palabra de la frase
-                        acorde_mostrar = acorde_voz if i == 0 else "&nbsp;"
-                        
-                        # Bloque normal de letra
-                        html_final += f"""
-                        <div class="bloque-palabra">
-                            <div class="acorde-style">{acorde_mostrar}</div>
-                            <div class="letra-style">{palabra}</div>
-                        </div>
-                        """
+                        # Acorde solo en la primera palabra
+                        acorde_vis = acorde_voz if i == 0 else "&nbsp;"
+                        if palabra: # Solo si la palabra no está vacía
+                            # HTML en una sola línea
+                            html_code += f'<div class="bloque-palabra"><div class="acorde-style">{acorde_vis}</div><div class="letra-style">{palabra}</div></div>'
                     
                     cursor_tiempo = fin
                 
-                html_final += '</div>'
+                # Rellenar final si hay outro musical
+                dur_total = librosa.get_duration(y=y, sr=sr)
+                if dur_total - cursor_tiempo > 2.0:
+                     idx_ini_end = int(cursor_tiempo * sr)
+                     acorde_end = analizar_segmento(y[idx_ini_end:], sr)
+                     html_code += f'<div class="bloque-instrumental"><div class="acorde-style">{acorde_end}</div><div class="texto-instrumental">Final</div></div>'
+
+                html_code += '</div>'
                 
-                # Renderizar (Mostrar en pantalla)
-                st.markdown(html_final, unsafe_allow_html=True)
+                # RENDERIZADO FINAL
+                st.markdown(html_code, unsafe_allow_html=True)
 
             except Exception as e:
-                st.error(f"Ocurrió un error: {e}")
-                st.warning("Si la app se reinicia, es posible que el archivo sea muy pesado para la versión gratuita.")
+                st.error(f"Error técnico: {e}")
+                st.warning("Si falla por memoria, intenta con una canción de menos de 4 minutos.")
             finally:
                 if os.path.exists(ruta_tmp):
                     os.remove(ruta_tmp)
