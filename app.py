@@ -6,126 +6,164 @@ import tempfile
 import os
 
 # --- Configuración Visual ---
-st.set_page_config(page_title="Acordes y Letra IA", page_icon="🎵")
+st.set_page_config(page_title="Cancionero IA", page_icon="🎸", layout="centered")
 
-# Estilo CSS para que se vea como en tu imagen
+# CSS para que se vea como un cancionero real (Acordes azules sobre texto)
 st.markdown("""
     <style>
-    .bloque-musical {
-        font-family: monospace;
-        margin-bottom: 20px;
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 5px;
+    .cancionero {
+        font-family: 'Courier New', monospace; /* Fuente tipo máquina de escribir para alinear */
+        white-space: pre-wrap;
+        line-height: 2.5; /* Espacio para que entre el acorde arriba */
+        font-size: 16px;
+        color: #333;
+    }
+    .bloque {
+        display: inline-block;
+        position: relative;
+        margin-right: 5px;
+        margin-bottom: 10px;
     }
     .acorde {
-        color: #0068c9; /* Azul fuerte */
+        position: absolute;
+        top: -20px; /* Sube el acorde */
+        left: 0;
+        color: #007bff; /* Azul intenso */
         font-weight: bold;
-        font-size: 18px;
+        font-size: 14px;
     }
     .letra {
-        color: #31333F;
-        font-size: 16px;
+        display: inline;
+    }
+    .instrumental {
+        color: #888;
+        font-style: italic;
+        border-bottom: 1px dashed #ccc;
     }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎵 Transcriptor de Canciones con Acordes")
-st.info("Sube tu canción. La IA escuchará la letra y calculará los acordes por frase.")
+st.title("🎸 Transcriptor de Canciones (Español)")
 
-# --- 1. Función de Detección de Acordes (Croma) ---
-def detectar_acorde_en_segmento(y, sr):
-    # Notas musicales (Cifrado Americano)
+# --- Lógica Musical ---
+def obtener_nombre_acorde(chroma_mean):
+    """Convierte vectores matemáticos a nombres de acordes (C, Dm, etc.)"""
     notas = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    idx = np.argmax(chroma_mean)
+    nota = notas[idx]
     
-    # Extraer energía de notas (Chroma)
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-    
-    # Promediar la energía de cada nota en este segmento
-    promedio_notas = np.mean(chroma, axis=1)
-    
-    # Encontrar la nota más fuerte (Raíz)
-    idx_raiz = np.argmax(promedio_notas)
-    nota_raiz = notas[idx_raiz]
-    
-    # Determinar si es Mayor o Menor (heurística simple basada en la tercera)
-    # Tercera Mayor esta a +4 semitonos, Menor a +3
-    idx_tercera_mayor = (idx_raiz + 4) % 12
-    idx_tercera_menor = (idx_raiz + 3) % 12
-    
-    val_mayor = promedio_notas[idx_tercera_mayor]
-    val_menor = promedio_notas[idx_tercera_menor]
-    
-    calidad = "m" if val_menor > val_mayor else "" # Si gana la menor, ponemos 'm'
-    
-    return f"{nota_raiz}{calidad}"
+    # Detección simple Mayor/Menor
+    tercera_mayor = (idx + 4) % 12
+    tercera_menor = (idx + 3) % 12
+    if chroma_mean[tercera_menor] > chroma_mean[tercera_mayor] * 1.1: # Umbral ligero
+        return f"{nota}m"
+    return nota
 
-# --- 2. Cargar Modelo Whisper (Letras) ---
+def analizar_segmento(y, sr):
+    if len(y) == 0: return ""
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    promedio = np.mean(chroma, axis=1)
+    return obtener_nombre_acorde(promedio)
+
+# --- Cargar IA ---
 @st.cache_resource
 def cargar_whisper():
-    # Usamos el modelo "tiny" porque Streamlit Cloud tiene poca memoria RAM.
-    # Si fuera en tu PC potente, usaríamos "base" o "small".
-    return whisper.load_model("tiny")
+    return whisper.load_model("tiny") # Usa 'base' si quieres más precisión (pero es más lento)
 
-# --- Interfaz Principal ---
-archivo = st.file_uploader("Sube tu archivo MP3", type=["mp3", "wav"])
+# --- App Principal ---
+archivo = st.file_uploader("Sube tu MP3/WAV", type=["mp3", "wav"])
 
 if archivo is not None:
     st.audio(archivo)
     
-    if st.button("Analizar Ahora (Letra + Acordes)"):
-        with st.spinner("⏳ Cargando IA y escuchando la canción... (Esto puede tardar 1-2 minutos)"):
+    if st.button("Generar Cancionero"):
+        with st.spinner("🎧 Escuchando (Español) y sacando acordes..."):
             
-            # Guardar temporal
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
                 tmp.write(archivo.getvalue())
                 ruta_tmp = tmp.name
             
             try:
-                # A. Transcribir Letra con Whisper
+                # 1. Cargar Audio
+                y, sr = librosa.load(ruta_tmp)
+                duracion_total = librosa.get_duration(y=y, sr=sr)
+                
+                # 2. Transcribir Letra (FORZANDO ESPAÑOL)
                 modelo = cargar_whisper()
-                resultado = modelo.transcribe(ruta_tmp)
-                segmentos = resultado['segments'] # Lista de frases con tiempos
+                # Aquí forzamos el idioma español 'es'
+                resultado = modelo.transcribe(ruta_tmp, language="es") 
+                segmentos = resultado['segments']
                 
-                # B. Cargar Audio para música con Librosa
-                y_completo, sr = librosa.load(ruta_tmp)
+                # 3. Rellenar Huecos (Intro, Intermedios, Outro)
+                linea_tiempo = [] # Lista final de eventos
+                cursor_tiempo = 0.0
                 
-                st.success("¡Análisis completado! Aquí tienes tu canción:")
-                st.divider()
-                
-                # C. Procesar cada frase
                 for seg in segmentos:
                     inicio = seg['start']
                     fin = seg['end']
-                    texto = seg['text']
+                    texto = seg['text'].strip()
                     
-                    # Cortar el audio justo en esa frase
-                    inicio_sample = int(inicio * sr)
-                    fin_sample = int(fin * sr)
+                    # A. ¿Hay un hueco grande antes de esta frase? (Intro o Intermedio)
+                    if inicio - cursor_tiempo > 2.0: 
+                        # Es música instrumental
+                        duracion_gap = inicio - cursor_tiempo
+                        # Si es muy largo, sacamos varios acordes (cada 2 seg)
+                        pasos = int(duracion_gap // 2) or 1
+                        for i in range(pasos):
+                            t_sub_inicio = cursor_tiempo + (i*2)
+                            t_sub_fin = min(t_sub_inicio + 2, inicio)
+                            
+                            idx_ini = int(t_sub_inicio * sr)
+                            idx_fin = int(t_sub_fin * sr)
+                            acorde_inst = analizar_segmento(y[idx_ini:idx_fin], sr)
+                            
+                            linea_tiempo.append({
+                                'tipo': 'instr',
+                                'acorde': acorde_inst,
+                                'texto': '▬' # Símbolo de música
+                            })
                     
-                    if fin_sample > len(y_completo):
-                        fin_sample = len(y_completo)
-                        
-                    y_segmento = y_completo[inicio_sample:fin_sample]
+                    # B. Analizar la frase cantada
+                    idx_ini = int(inicio * sr)
+                    idx_fin = int(fin * sr)
+                    acorde_voz = analizar_segmento(y[idx_ini:idx_fin], sr)
                     
-                    # Detectar acorde de ese pedacito
-                    if len(y_segmento) > 0:
-                        acorde = detectar_acorde_en_segmento(y_segmento, sr)
-                    else:
-                        acorde = ""
+                    linea_tiempo.append({
+                        'tipo': 'voz',
+                        'acorde': acorde_voz,
+                        'texto': texto
+                    })
                     
-                    # D. Mostrar Estilo "Imagen Adjunta" (Azul arriba, Texto abajo)
-                    html_bloque = f"""
-                    <div class="bloque-musical">
+                    cursor_tiempo = fin
+
+                # 4. Chequear el Final (Outro)
+                if duracion_total - cursor_tiempo > 2.0:
+                    idx_ini = int(cursor_tiempo * sr)
+                    acorde_final = analizar_segmento(y[idx_ini:], sr)
+                    linea_tiempo.append({'tipo': 'instr', 'acorde': acorde_final, 'texto': '(Final)'})
+
+                # 5. Renderizar HTML Bonito
+                st.success("¡Transcripción Completa!")
+                st.markdown("---")
+                
+                html_salida = '<div class="cancionero">'
+                for evento in linea_tiempo:
+                    acorde = evento['acorde']
+                    texto = evento['texto']
+                    clase_extra = " instrumental" if evento['tipo'] == 'instr' else ""
+                    
+                    # Creamos el bloque HTML: Acorde flotando sobre Texto
+                    html_salida += f"""
+                    <div class="bloque{clase_extra}">
                         <div class="acorde">{acorde}</div>
                         <div class="letra">{texto}</div>
                     </div>
                     """
-                    st.markdown(html_bloque, unsafe_allow_html=True)
+                html_salida += '</div>'
+                
+                st.markdown(html_salida, unsafe_allow_html=True)
 
             except Exception as e:
                 st.error(f"Error: {e}")
-                st.warning("Nota: A veces la memoria gratis de Streamlit se llena. Si falla, intenta con una canción más corta.")
-            
             finally:
                 os.remove(ruta_tmp)
