@@ -5,180 +5,215 @@ import whisper
 import tempfile
 import os
 
-# --- 1. Configuración Visual (CSS Robusto) ---
-st.set_page_config(page_title="Cancionero Pro 2.0", page_icon="🎵", layout="wide")
+# --- CONFIGURACIÓN VISUAL (ESTILO CANCIONERO PRO) ---
+st.set_page_config(page_title="Cancionero Banda Pro", page_icon="🎸", layout="wide")
 
-# CSS: Definimos el estilo para que se vea profesional y forzamos la alineación
 st.markdown("""
 <style>
-.cancionero-container {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    line-height: 2.2;
-    font-family: 'Segoe UI', sans-serif;
-    padding: 30px;
+/* Estilo general limpio */
+.main-container {
     background-color: #ffffff;
-    border-radius: 12px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    padding: 30px;
+    border-radius: 10px;
+    font-family: 'Arial', sans-serif;
+    line-height: 2.8; /* Mucho espacio para los acordes */
 }
-.bloque-palabra {
-    display: flex;
+
+/* Contenedor de palabras */
+.word-box {
+    display: inline-flex;
     flex-direction: column;
-    align-items: center;
-    margin-right: 4px;
-    margin-bottom: 25px;
+    align-items: center; /* Centra el acorde sobre la palabra */
+    margin-right: 6px; /* Espacio entre palabras */
+    vertical-align: bottom;
+    position: relative;
+    height: 60px; /* Altura fija para alinear todo */
+    justify-content: flex-end; /* Texto abajo */
 }
-.acorde-style {
-    color: #007bff;
+
+/* El Acorde (Arriba y destacado) */
+.chord-label {
+    font-size: 14px;
     font-weight: 900;
-    font-size: 15px;
-    height: 20px;
-    margin-bottom: 4px;
-    min-width: 20px;
-    text-align: center;
+    color: #0044cc; /* Azul profesional */
+    margin-bottom: 2px;
+    position: absolute;
+    top: 5px; /* Fijado arriba */
+    background-color: rgba(255,255,255,0.8);
+    padding: 0 2px;
+    border-radius: 4px;
 }
-.letra-style {
+
+/* La Palabra (Abajo y legible) */
+.lyrics-label {
+    font-size: 18px;
     color: #111;
-    font-size: 19px;
-    letter-spacing: 0.5px;
+    white-space: nowrap;
 }
-.bloque-instrumental {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    background-color: #f1f3f5;
-    padding: 4px 12px;
-    border-radius: 6px;
-    border: 1px solid #dee2e6;
-    margin-right: 10px;
-    margin-bottom: 25px;
-}
-.texto-instrumental {
-    font-size: 11px;
-    color: #868e96;
-    font-weight: bold;
-    text-transform: uppercase;
-    margin-top: 4px;
+
+/* Secciones Instrumentales */
+.instrumental-break {
+    display: block;
+    margin: 20px 0;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-left: 4px solid #0044cc;
+    color: #555;
+    font-family: monospace;
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🎹 Transcriptor Pro (Modelo Small + Anti-Alucinaciones)")
-st.info("Usando modelo 'SMALL'. Puede tardar un poco más, pero la calidad es superior.")
+st.title("🎸 Transcriptor para Bandas (Precisión por Palabra)")
+st.info("💡 Tip: Usando separación armónica para ignorar la batería y detectar mejores acordes.")
 
-# --- 2. Funciones Musicales ---
-def obtener_nombre_acorde(chroma_mean):
+# --- LÓGICA MUSICAL AVANZADA ---
+
+def generar_templates_acordes():
+    """Genera moldes matemáticos para acordes Mayores y Menores."""
+    templates = {}
     notas = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-    idx = np.argmax(chroma_mean)
-    nota = notas[idx]
     
-    tercera_mayor = (idx + 4) % 12
-    tercera_menor = (idx + 3) % 12
+    for i, nota in enumerate(notas):
+        # Mayor (Raíz, +4, +7)
+        vec_maj = np.roll(np.array([1,0,0,0,1,0,0,1,0,0,0,0]), i)
+        templates[f"{nota}"] = vec_maj # Cifrado simple (C, D) para mayor
+        
+        # Menor (Raíz, +3, +7)
+        vec_min = np.roll(np.array([1,0,0,1,0,0,0,1,0,0,0,0]), i)
+        templates[f"{nota}m"] = vec_min
+        
+    return templates, notas
+
+def detectar_acorde_preciso(chroma_segmento, templates):
+    """Compara el audio con los moldes y devuelve el mejor candidato."""
+    if chroma_segmento.shape[1] == 0: return ""
     
-    # Ajuste de sensibilidad para acordes menores
-    if chroma_mean[tercera_menor] > chroma_mean[tercera_mayor] * 1.05:
-        return f"{nota}m"
-    return nota
+    # Promediamos el segmento de audio
+    vector_audio = np.mean(chroma_segmento, axis=1)
+    
+    mejor_acorde = ""
+    max_score = -float('inf')
+    
+    for nombre, template in templates.items():
+        # Correlación matemática (similitud)
+        score = np.dot(vector_audio, template)
+        if score > max_score:
+            max_score = score
+            mejor_acorde = nombre
+            
+    return mejor_acorde
 
-def analizar_segmento(y, sr):
-    if len(y) == 0: return ""
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-    promedio = np.mean(chroma, axis=1)
-    return obtener_nombre_acorde(promedio)
-
-# --- 3. Carga IA (MODELO SMALL) ---
+# --- CARGA DE IA ---
 @st.cache_resource
 def cargar_whisper():
-    # 'small' es el equilibrio perfecto. 'medium' suele colapsar la memoria gratis.
-    return whisper.load_model("small") 
+    # Usamos 'small' para balancear precisión de letra y memoria
+    return whisper.load_model("small")
 
-# --- 4. Aplicación Principal ---
-archivo = st.file_uploader("Sube tu audio (MP3/WAV)", type=["mp3", "wav"])
+# --- APP PRINCIPAL ---
+archivo = st.file_uploader("Sube el audio de la banda (MP3/WAV)", type=["mp3", "wav"])
 
 if archivo is not None:
     st.audio(archivo)
     
-    if st.button("Analizar con Precisión"):
-        with st.spinner("🧠 Cerebro 'Small' pensando... (Esto toma unos 2 minutos, paciencia)..."):
+    if st.button("Transcribir Partitura"):
+        with st.spinner("🥁 Separando instrumentos, analizando armonía y sincronizando letra... (Esto toma 2-3 min)"):
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
                 tmp.write(archivo.getvalue())
                 ruta_tmp = tmp.name
             
             try:
-                # A. Cargar Audio Musical
+                # 1. PROCESAMIENTO DE AUDIO (Heavy Lifting)
+                # Cargamos audio
                 y, sr = librosa.load(ruta_tmp)
                 
-                # B. Transcribir con PARAMETROS ANTI-ALUCINACIÓN
+                # TRUCO PRO: Separar la parte armónica (piano/guitarra) de la percusiva (batería)
+                # Esto evita que el golpe de caja confunda al detector de acordes.
+                y_harmonica, _ = librosa.effects.hpss(y)
+                
+                # Calculamos CENS (Chroma Energy Normalized) - Mejor para acordes estables
+                chroma = librosa.feature.chroma_cens(y=y_harmonica, sr=sr)
+                templates, _ = generar_templates_acordes()
+                
+                # 2. TRANSCRIPCIÓN CON TIMESTAMPS POR PALABRA
                 modelo = cargar_whisper()
+                # word_timestamps=True es la clave para la ubicación exacta
+                resultado = modelo.transcribe(
+                    ruta_tmp, 
+                    language="es", 
+                    word_timestamps=True, # ¡CRUCIAL!
+                    condition_on_previous_text=False # Evita bucles
+                )
                 
-                # Estos parámetros evitan que la IA invente texto cuando hay solo música
-                opciones = {
-                    "language": "es", 
-                    "temperature": 0.0, # Creatividad 0 para ser fiel
-                    "condition_on_previous_text": False, # Evita bucles de repetición
-                    "no_speech_threshold": 0.6, # Ignora ruidos bajos
-                    "initial_prompt": "Esta es la letra de una canción en español." # Contexto forzado
-                }
+                st.success("¡Análisis completado! Aquí está tu guía:")
                 
-                resultado = modelo.transcribe(ruta_tmp, **opciones)
-                segmentos = resultado['segments']
+                # 3. RENDERIZADO VISUAL
+                html_out = '<div class="main-container">'
                 
-                st.success("¡Análisis Completado!")
-                st.divider()
+                last_time = 0.0
                 
-                # --- C. CONSTRUCCIÓN HTML COMPACTA (Solución al error visual) ---
-                # Importante: No dejar espacios ni saltos de línea dentro del string HTML
-                html_code = '<div class="cancionero-container">'
-                cursor_tiempo = 0.0
-                
-                for seg in segmentos:
-                    inicio = seg['start']
-                    fin = seg['end']
-                    texto_frase = seg['text'].strip()
+                # Iteramos por segmentos y LUEGO por palabras
+                for segmento in resultado['segments']:
+                    words = segmento.get('words', [])
                     
-                    # 1. DETECTAR PARTES INSTRUMENTALES (GAPS > 2 seg)
-                    if inicio - cursor_tiempo > 2.0:
-                        idx_ini_gap = int(cursor_tiempo * sr)
-                        idx_fin_gap = int(inicio * sr)
+                    # Si Whisper no devuelve palabras (versiones viejas), fallback a segmento
+                    if not words: 
+                        words = [{'word': segmento['text'], 'start': segmento['start'], 'end': segmento['end']}]
+                    
+                    for word_obj in words:
+                        palabra = word_obj['word'].strip()
+                        start = word_obj['start']
+                        end = word_obj['end']
                         
-                        if idx_fin_gap > idx_ini_gap:
-                            acorde_gap = analizar_segmento(y[idx_ini_gap:idx_fin_gap], sr)
-                            # HTML en una sola línea para evitar errores
-                            html_code += f'<div class="bloque-instrumental"><div class="acorde-style">{acorde_gap}</div><div class="texto-instrumental">Música</div></div>'
+                        # A. DETECTAR SILENCIOS LARGOS (Instrumental)
+                        if start - last_time > 3.0: # Más de 3 seg de silencio
+                            # Analizamos el centro de ese silencio
+                            mid_start = int(last_time * sr / 512)
+                            mid_end = int(start * sr / 512)
+                            if mid_end > mid_start:
+                                # Tomamos una muestra del chroma en ese hueco
+                                acorde_inst = detectar_acorde_preciso(chroma[:, mid_start:mid_end], templates)
+                                html_out += f"""
+                                <div class="instrumental-break">
+                                    🎵 Solo / Intro ({int(last_time)}s - {int(start)}s): <strong>{acorde_inst}</strong>
+                                </div>
+                                """
+                        
+                        # B. DETECTAR ACORDE DE LA PALABRA
+                        # Convertimos tiempo a "frames" del chroma
+                        # librosa CENS suele tener hop_length=512 por defecto
+                        idx_start = int(start * sr / 512)
+                        idx_end = int(end * sr / 512)
+                        
+                        # Si la palabra es muy corta, tomamos un margen mínimo
+                        if idx_end <= idx_start:
+                            idx_end = idx_start + 1
+                            
+                        acorde = detectar_acorde_preciso(chroma[:, idx_start:idx_end], templates)
+                        
+                        # Verificar si el acorde cambió respecto al anterior para no repetirlo tanto?
+                        # Para bandas, mejor mostrarlo siempre si hay dudas.
+                        
+                        # C. DIBUJAR CAJA
+                        html_out += f"""
+                        <div class="word-box">
+                            <div class="chord-label">{acorde}</div>
+                            <div class="lyrics-label">{palabra}</div>
+                        </div>
+                        """
+                        
+                        last_time = end
                     
-                    # 2. PROCESAR FRASE CANTADA
-                    idx_ini = int(inicio * sr)
-                    idx_fin = int(fin * sr)
-                    acorde_voz = analizar_segmento(y[idx_ini:idx_fin], sr)
-                    
-                    palabras = texto_frase.split(" ")
-                    
-                    for i, palabra in enumerate(palabras):
-                        # Acorde solo en la primera palabra
-                        acorde_vis = acorde_voz if i == 0 else "&nbsp;"
-                        if palabra: # Solo si la palabra no está vacía
-                            # HTML en una sola línea
-                            html_code += f'<div class="bloque-palabra"><div class="acorde-style">{acorde_vis}</div><div class="letra-style">{palabra}</div></div>'
-                    
-                    cursor_tiempo = fin
+                    # Salto de línea visual al terminar una frase completa
+                    html_out += "<br>" 
                 
-                # Rellenar final si hay outro musical
-                dur_total = librosa.get_duration(y=y, sr=sr)
-                if dur_total - cursor_tiempo > 2.0:
-                     idx_ini_end = int(cursor_tiempo * sr)
-                     acorde_end = analizar_segmento(y[idx_ini_end:], sr)
-                     html_code += f'<div class="bloque-instrumental"><div class="acorde-style">{acorde_end}</div><div class="texto-instrumental">Final</div></div>'
-
-                html_code += '</div>'
-                
-                # RENDERIZADO FINAL
-                st.markdown(html_code, unsafe_allow_html=True)
+                html_out += '</div>'
+                st.markdown(html_out, unsafe_allow_html=True)
 
             except Exception as e:
-                st.error(f"Error técnico: {e}")
-                st.warning("Si falla por memoria, intenta con una canción de menos de 4 minutos.")
+                st.error(f"Ocurrió un error técnico: {e}")
+                st.warning("Asegúrate de haber actualizado 'requirements.txt' con la versión de whisper indicada.")
             finally:
                 if os.path.exists(ruta_tmp):
                     os.remove(ruta_tmp)
